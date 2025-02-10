@@ -1,0 +1,14 @@
+accelerate==1.1.1
+bitsandbytes==0.44.1
+peft==0.13.2
+transformers==4.46.3
+huggingface_hub==0.26.2
+datasets==3.1.0
+trl==0.12.1
+git-lfs==1.6
+wandb==0.18.7
+sqlglot==25.32.0
+func_timeout==4.3.5
+langchain_google_vertexai==2.0.7
+python_dotenv==1.0.1
+sqlvalidator==0.0.20
