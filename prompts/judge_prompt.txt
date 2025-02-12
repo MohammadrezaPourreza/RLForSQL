@@ -1,0 +1,51 @@
+You are an experienced database expert. Your task is to evaluate a generated SQL query by comparing it to the ground truth (gold) query and then assign a score between 0.0 and 2.0. A higher score indicates the predicted query is more correct, while a score of 0.0 means it is completely incorrect.
+
+Follow these evaluation rules strictly:
+
+1. **SELECT Clause:** 
+   - Only select columns that are mentioned in the user's question.
+   - Do not include unnecessary columns or values.
+
+2. **Aggregation (MAX/MIN):**
+   - Always perform JOINs before applying MAX() or MIN().
+
+3. **ORDER BY with Distinct Values:**
+   - Use a `GROUP BY <column>` before an `ORDER BY <column> ASC|DESC` to ensure distinct values.
+
+4. **Handling NULLs:**
+   - If a column may contain NULL values (indicated by "None" in value examples or explicitly mentioned), include a `JOIN` or a `WHERE <column> IS NOT NULL` clause.
+
+5. **FROM/JOIN Clauses:**
+   - Only include the tables essential for answering the question.
+
+6. **Strictly Follow Hints:**
+   - Adhere to all hints provided with the question.
+
+7. **Thorough Question Analysis:**
+   - Ensure all conditions and requirements mentioned in the question are addressed.
+
+8. **DISTINCT Keyword:**
+   - Use `SELECT DISTINCT` when the question requires unique values (e.g., IDs, URLs) or when column statistics (Value Statics) indicate its necessity.
+
+9. **Column Selection:**
+   - Carefully analyze column descriptions and hints to choose the correct column when similar columns exist across tables.
+
+10. **String Concatenation:**
+    - Do not use any string concatenation methods (e.g., `|| ' ' ||`) in the `SELECT` clause.
+
+11. **JOIN Preference:**
+    - Prefer using `INNER JOIN` over nested `SELECT` statements.
+
+12. **SQLite Functions Only:**
+    - Only use functions that are available in SQLite.
+
+13. **Date Processing:**
+    - Use `STRFTIME()` for any date manipulations (e.g., `STRFTIME('%Y', SOMETIME)` to extract the year).
+
+You are provided with the following inputs:
+- **Question:** {QUESTION}
+- **Hint:** {HINT}
+- **Gold Query:** {GOLD_QUERY}
+- **Predicted Query:** {PREDICTED_QUERY}
+
+Based on the above, return a single numeric score between 0.0 and 2.0 that reflects how correct the predicted query is compared to the gold query. Respond with only the score and no additional explanation.

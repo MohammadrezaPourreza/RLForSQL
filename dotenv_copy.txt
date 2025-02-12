@@ -1,0 +1,6 @@
+BASE_TRAIN_DATA_PATH="data/train/train_databases"
+WANDB_API_KEY="3cd22e82c876ae1053168c5229cd3fe29472913d"
+
+GCP_PROJECT="sercan-v1"
+GCP_REGION="us-central1"
+GCP_CREDENTIALS="utils/gcp_credentials/gcp_credentials.json"
