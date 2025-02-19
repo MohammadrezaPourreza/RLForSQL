@@ -5,6 +5,7 @@ from utils.execution import compare_sqls, execute_sql
 from prompts.prompt_loader import load_prompt
 from datasets import load_dataset, DatasetDict
 from trl import GRPOConfig, GRPOTrainer
+from peft import LoraConfig, TaskType, PeftModel
 from dotenv import load_dotenv
 from typing import Any
 from tqdm import tqdm
@@ -105,13 +106,13 @@ def construct_fineutning_dataset(tokenizer: Any):
 
 
 def extract_sql_queries(text):
-    pattern = r"```sql(.*?)```"
+    pattern = r"```sql\s*(.*?)\s*```"
     matches = re.findall(pattern, text, re.DOTALL)
     if matches:
         queries = [match.strip() for match in matches]
-        return queries[-1] # Return the last query
+        return queries[-1]  # Return the last query
     else:
-        return text 
+        return text
 
 ###### --------------------- REWARD FUNCTIONS --------------------- ######
 
@@ -228,7 +229,7 @@ def train_model(dataset: Any, args: argparse.Namespace, tokenizer: Any, model: A
         save_steps = 250,
         max_grad_norm = 0.1,
         report_to = "wandb", # Can use Weights & Biases
-        output_dir = "outputs5",
+        output_dir = "gold_schema_ex",
     )
 
     trainer = GRPOTrainer(
@@ -236,8 +237,8 @@ def train_model(dataset: Any, args: argparse.Namespace, tokenizer: Any, model: A
         processing_class = tokenizer,
         reward_funcs = [
             execution_acc_reward_func,
-            syntax_check_reward_func,
-            schema_linking_reward_func,
+            # syntax_check_reward_func,
+            # schema_linking_reward_func,
             xmlcount_reward_func,
             soft_format_reward_func,
             strict_format_reward_func,
@@ -266,9 +267,9 @@ if __name__ == "__main__":
     args.add_argument("--max_completion_length", type=int, default=800)
     args.add_argument("--lora_rank", type=int, default=16)
     args.add_argument("--lora_alpha", type=int, default=16)
-    args.add_argument("--per_device_train_batch_size", type=int, default=6)
+    args.add_argument("--per_device_train_batch_size", type=int, default=5)
     args.add_argument("--epochs", type=int, default=10)
-    args.add_argument("--gradient_accumulation_steps", type=int, default=2)
+    args.add_argument("--gradient_accumulation_steps", type=int, default=6)
     args.add_argument("--num_generations", type=int, default=4) # Decrease if out of memory
     args = args.parse_args()
 
@@ -285,6 +286,6 @@ if __name__ == "__main__":
     print(f"No of samples: {dataset['train'].shape[0]}")
     model = get_peft_model(model, args.lora_alpha, args.lora_rank)
     trainer = train_model(dataset, args, tokenizer, model)
-    model.save_lora("grpo_saved_lora_ex_syntax_schema_gold_schema")
-    model.save_pretrained_merged("grpo_model_ex_syntax_schema_gold_schema", tokenizer, save_method = "merged_16bit",)
+    model.save_lora("grpo_saved_lora_ex_gold_schema")
+    model.save_pretrained_merged("grpo_model_ex_gold_schema", tokenizer, save_method = "merged_16bit",)
     # model.push_to_hub_merged("hf/model", tokenizer, save_method = "merged_16bit", token = "")

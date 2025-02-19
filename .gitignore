@@ -187,3 +187,14 @@ outputs2/
 outputs3/
 outputs4/
 outputs5/
+
+qwen3B-GRPO-llm_ex_syn_schema/
+qwen3B-GRPO-llm_ex_syn_schema_ngram/
+qwen3B-GRPO-llm_judge/
+
+outputs_llm_judge/
+results/
+
+SFT/
+
+qwen3B-GRPO-llm-ex-only/

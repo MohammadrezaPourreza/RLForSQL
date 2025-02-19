@@ -1,11 +1,15 @@
-from unsloth import FastLanguageModel, PatchFastRL
+# from unsloth import FastLanguageModel, PatchFastRL
 from unsloth import is_bfloat16_supported
 from utils.database_manager import get_db_schema_db_id, schema_linking_scorer
 from utils.execution import compare_sqls, execute_sql
+from utils.ngrams import jaccard_similarity
 from prompts.prompt_loader import load_prompt
 from utils.gemini_utils import GeminiModel
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict 
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
+from peft import LoraConfig, TaskType, PeftModel
+from utils.llm_utils import load_model, load_tokenizer
 from dotenv import load_dotenv
 from typing import Any
 from tqdm import tqdm
@@ -19,7 +23,20 @@ import re
 import wandb
 
 
-wandb.init(project="grpo-training-all", name="only-ex-feedback")
+# def patch_vllm_deepcopy():
+#     try:
+#         from vllm.engine import llm_engine
+#         def engine_deepcopy(self, memo):
+#             return self  # Simply return the same instance instead of copying.
+#         llm_engine.LLMEngine.__deepcopy__ = engine_deepcopy
+#         print("Patched vLLM engine deepcopy successfully.")
+#     except ImportError:
+#         print("vllm module not found, skipping deepcopy patch.")
+
+# patch_vllm_deepcopy()
+
+
+wandb.init(project="grpo-training-vllm", name="ex_syn_schema_ngram_augmented")
 judge_model = GeminiModel(model_name="gemini-1.5-pro-002")
 
 SYSTEM_PROMPT = """
@@ -33,34 +50,6 @@ Respond in the following format:
 """
 
 load_dotenv(override=True)
-
-def patch_grpo():
-    PatchFastRL("GRPO", FastLanguageModel)
-
-def load_model(model_name: str, max_seq_length: int, lora_rank: int):
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = model_name,
-        max_seq_length = max_seq_length,
-        load_in_4bit = False, # False for LoRA 16bit
-        fast_inference = False, # Enable vLLM fast inference
-        max_lora_rank = lora_rank,
-        gpu_memory_utilization = 0.5, # Reduce if out of memory
-    )
-    return model, tokenizer
-
-
-def get_peft_model(model: Any, lora_alpha: int, lora_rank: int):
-    return FastLanguageModel.get_peft_model(
-        model,
-        r = lora_rank, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
-        target_modules = [
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ], # Remove QKVO if out of memory
-        lora_alpha = lora_alpha,
-        use_gradient_checkpointing = "unsloth", # Enable long context finetuning
-        random_state = 3407,
-    )
 
 def construct_fineutning_dataset(tokenizer: Any):
     dataset_name = "finetuning_datasets/zero_shot_grpo.csv"
@@ -109,13 +98,13 @@ def construct_fineutning_dataset(tokenizer: Any):
 
 
 def extract_sql_queries(text):
-    pattern = r"```sql(.*?)```"
+    pattern = r"```sql\s*(.*?)\s*```"
     matches = re.findall(pattern, text, re.DOTALL)
     if matches:
         queries = [match.strip() for match in matches]
-        return queries[-1] # Return the last query
+        return queries[-1]  # Return the last query
     else:
-        return text 
+        return text
 
 ###### --------------------- REWARD FUNCTIONS --------------------- ######
 
@@ -161,6 +150,42 @@ def execution_acc_reward_func(prompts, completions, answer,db_id ,question ,evid
     return rewards
 
 
+def old_execution_acc_reward_func(prompts, completions, answer, db_id, **kwargs) -> list[float]:
+    print(f"Sample Completions :\n{completions[0]}")
+    responses = [extract_sql_queries(completion) for completion in completions]
+
+    def evaluate(response, db, gold_query):
+        try:
+            if "SELECT" not in response:
+                return 0.0
+            exec_res = compare_sqls(
+                db_directory_path=os.getenv("BASE_TRAIN_DATA_PATH"),
+                db_id=db,
+                predicted_sql=response,
+                ground_truth_sql=gold_query,
+            )
+            return 2.0 if exec_res.get('exec_res') else 0.0
+        except Exception:
+            return 0.0
+
+    # Use ThreadPoolExecutor to process items in parallel.
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        rewards = list(executor.map(evaluate, responses, db_id, answer))
+    
+    print(f"Rewards: {rewards}")
+    return rewards
+
+def sql_ngram_similarity(prompts, completions, answer, db_id, **kwargs) -> list[float]:
+    responses = [extract_sql_queries(completion) for completion in completions]
+    rewards = []
+    for response, gold_query in zip(responses, answer):
+        try:
+            rewards.append(jaccard_similarity(response, gold_query, n = 2))
+        except Exception as e:
+            rewards.append(0.0)
+    return rewards
+
+
 def syntax_check_reward_func(prompts, completions, answer, db_id, **kwargs) -> list[float]:
     responses = [extract_sql_queries(completion) for completion in completions]
     rewards = []
@@ -194,15 +219,15 @@ def schema_linking_reward_func(prompts, completions, answer, db_id, **kwargs) ->
 ### formatting reward functions:
 
 def strict_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has a specific format."""
-    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
-    matches = [re.match(pattern, r) for r in completions]
+    """Strict reward function that checks if the completion has an exact format."""
+    pattern = r"^\s*<reasoning>\s*.*?\s*</reasoning>\s*<answer>\s*.*?\s*</answer>\s*$"
+    matches = [re.fullmatch(pattern, r, re.DOTALL) for r in completions]
     return [0.5 if match else 0.0 for match in matches]
 
 def soft_format_reward_func(completions, **kwargs) -> list[float]:
-    """Reward function that checks if the completion has a specific format."""
-    pattern = r"(?s)<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
-    matches = [re.match(pattern, r) for r in completions]
+    """Soft reward function that checks if the completion loosely follows the format."""
+    pattern = r"<reasoning>\s*.*?\s*</reasoning>\s*<answer>\s*.*?\s*</answer>"
+    matches = [re.search(pattern, r, re.DOTALL) for r in completions]
     return [0.5 if match else 0.0 for match in matches]
 
 def count_xml(text) -> float:
@@ -226,7 +251,9 @@ def xmlcount_reward_func(completions, **kwargs) -> list[float]:
 
 def train_model(dataset: Any, args: argparse.Namespace, tokenizer: Any, model: Any):
     training_args = GRPOConfig(
-        use_vllm = False, # use vLLM for fast inference!
+        use_vllm = True, # use vLLM for fast inference!
+        vllm_device='cuda:0',
+        vllm_gpu_memory_utilization=0.3,
         learning_rate = 5e-5,
         adam_beta1 = 0.9,
         adam_beta2 = 0.99,
@@ -239,6 +266,8 @@ def train_model(dataset: Any, args: argparse.Namespace, tokenizer: Any, model: A
         fp16 = not is_bfloat16_supported(),
         per_device_train_batch_size = args.per_device_train_batch_size,
         gradient_accumulation_steps = args.gradient_accumulation_steps,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         num_generations = args.num_generations,
         max_prompt_length = args.max_prompt_length,
         max_completion_length = args.max_completion_length,
@@ -247,19 +276,20 @@ def train_model(dataset: Any, args: argparse.Namespace, tokenizer: Any, model: A
         save_steps = 250,
         max_grad_norm = 0.1,
         report_to = "wandb", # Can use Weights & Biases
-        output_dir = "outputs5",
+        output_dir = args.output_model_name
     )
 
     trainer = GRPOTrainer(
         model = model,
         processing_class = tokenizer,
         reward_funcs = [
-            execution_acc_reward_func,
-            # syntax_check_reward_func,
-            # schema_linking_reward_func,
+            old_execution_acc_reward_func,
+            syntax_check_reward_func,
+            schema_linking_reward_func,
             xmlcount_reward_func,
-            soft_format_reward_func,
-            strict_format_reward_func,
+            sql_ngram_similarity,
+            # soft_format_reward_func,
+            # strict_format_reward_func,
         ],
         args = training_args,
         train_dataset = dataset["train"],
@@ -281,29 +311,31 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct")
     args.add_argument("--max_seq_length", type=int, default=2500)
-    args.add_argument("--max_prompt_length", type=int, default=1500)
+    args.add_argument("--max_prompt_length", type=int, default=1700)
     args.add_argument("--max_completion_length", type=int, default=800)
     args.add_argument("--lora_rank", type=int, default=16)
     args.add_argument("--lora_alpha", type=int, default=16)
-    args.add_argument("--per_device_train_batch_size", type=int, default=6)
-    args.add_argument("--epochs", type=int, default=10)
-    args.add_argument("--gradient_accumulation_steps", type=int, default=2)
-    args.add_argument("--num_generations", type=int, default=4) # Decrease if out of memory
+    args.add_argument("--per_device_train_batch_size", type=int, default=2)
+    args.add_argument("--epochs", type=int, default=3)
+    args.add_argument("--gradient_accumulation_steps", type=int, default=16)
+    args.add_argument("--num_generations", type=int, default=5) # Decrease if out of memory
+    args.add_argument("--hf_username", type=str, default="MrezaPRZ")
+    args.add_argument("--output_model_name", type=str, default="qwen3B-GRPO-llm_ex_syn_schema_ngram")
     args = args.parse_args()
 
-    patch_grpo()
-
-    model, tokenizer = load_model(args.model_name, args.max_seq_length, args.lora_rank)
+    
+    new_model_name = f"{args.hf_username}/{args.output_model_name}"
+    model = load_model(args.model_name)
+    tokenizer = load_tokenizer(args.model_name)
     dataset = construct_fineutning_dataset(tokenizer)
-    # dataset = dataset['train'].train_test_split(test_size=0.001, shuffle=True)
+    dataset = dataset['train'].train_test_split(test_size=0.01, shuffle=True)
     dataset = DatasetDict({
         'train': dataset['train'],
-        # 'validation': dataset['test']
+        'validation': dataset['test']
     })
     dataset = dataset.filter(filter_samples_based_on_length, fn_kwargs={'max_seq_length': args.max_prompt_length, 'tokenizer': tokenizer})
     print(f"No of samples: {dataset['train'].shape[0]}")
-    model = get_peft_model(model, args.lora_alpha, args.lora_rank)
     trainer = train_model(dataset, args, tokenizer, model)
-    model.save_lora("grpo_saved_lora_ex_syntax_schema_gold_schema")
-    model.save_pretrained_merged("grpo_model_ex_syntax_schema_gold_schema", tokenizer, save_method = "merged_16bit",)
-    # model.push_to_hub_merged("hf/model", tokenizer, save_method = "merged_16bit", token = "")
+    trainer.save_model(args.output_model_name)
+    trainer.model.push_to_hub(new_model_name)
+    trainer.tokenizer.push_to_hub(new_model_name)

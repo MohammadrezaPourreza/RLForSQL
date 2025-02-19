@@ -19,10 +19,10 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 def construct_fineutning_dataset(zero_shot: bool = False):
-    dataset_name = "finetuning_datasets/zero_shot_sft.csv" if zero_shot else "finetuning_datasets/few_shot_sft.csv"
+    dataset_name = "finetuning_datasets/zero_shot_sft_cot.csv" if zero_shot else "finetuning_datasets/few_shot_sft.csv"
     if os.path.exists(dataset_name):
         return load_dataset('csv', data_files=dataset_name)
-    df = pd.read_json("data/train/train.json")
+    df = pd.read_json("data/train/train_cot.json")
     df = df.sample(frac=1).reset_index(drop=True)
     training_datasets = []
     for index, row in tqdm(df.iterrows(), total=df.shape[0]):
@@ -41,7 +41,7 @@ def construct_fineutning_dataset(zero_shot: bool = False):
             continue
         if zero_shot:
             prompt = load_prompt(
-                'sql_generation_zero_shot_sft'
+                'sql_generation_cot_sft'
             )
             prompt = prompt.format(
                 QUESTION=question,
@@ -49,7 +49,7 @@ def construct_fineutning_dataset(zero_shot: bool = False):
                 HINT=evidence,
             )
             user_message = prompt
-            ai_message = "```sql\n" + gold_query + "\n```"
+            ai_message = row['cot']
             training_datasets.append({
                 "user_message": user_message,
                 "ai_message": ai_message
@@ -202,7 +202,7 @@ def train_model(dataset: Any, args: argparse.Namespace, tokenizer: AutoTokenizer
 if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-Coder-3B-Instruct")
-    args.add_argument("--adapter_name", type=str, default="Qwen2.5-Coder-3B-Instruct-SQL")
+    args.add_argument("--adapter_name", type=str, default="Qwen2.5-Coder-3B-Instruct-SQL-COT")
     args.add_argument("--lora_rank", type=int, default=64)
     args.add_argument("--lora_alpha", type=float, default=64)
     args.add_argument("--zero_shot", type=bool, default=True)
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     args.add_argument("--batch_size", type=int, default=4)
     args.add_argument("--gradient_accumulation_steps", type=int, default=8)
     args.add_argument("--response_template", type=str, default="assistant")
-    args.add_argument("--max_seq_length", type=int, default=2500)
+    args.add_argument("--max_seq_length", type=int, default=3500)
     args.add_argument("--merge_adapter", type=bool, default=True)
     args.add_argument("--hf_username", type=str, default="MrezaPRZ")
 
