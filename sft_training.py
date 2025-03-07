@@ -3,6 +3,8 @@ import dataclasses
 import argparse
 import os
 import torch
+import json
+import ast
 
 from utils.llm_utils import load_model, load_tokenizer
 from utils.database_manager import get_db_schema_db_id
@@ -18,7 +20,16 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-def construct_fineutning_dataset(zero_shot: bool = False):
+
+def wrong_question():
+    df = pd.read_csv("schema_linking/train_filtered.csv")
+    wrong_ids = {}
+    for index, row in df.iterrows():
+        if row['overall_confidence'] == 10:
+            wrong_ids[row['question_id'].split("_",1)[0]] = row['question']
+    return wrong_ids
+
+def construct_fineutning_dataset(zero_shot: bool, wrong_ids, schema_linking_result):
     dataset_name = "finetuning_datasets/zero_shot_sft.csv" if zero_shot else "finetuning_datasets/few_shot_sft.csv"
     if os.path.exists(dataset_name):
         return load_dataset('csv', data_files=dataset_name)
@@ -26,15 +37,20 @@ def construct_fineutning_dataset(zero_shot: bool = False):
     df = df.sample(frac=1).reset_index(drop=True)
     training_datasets = []
     for index, row in tqdm(df.iterrows(), total=df.shape[0]):
+        if str(index+1) in wrong_ids:
+            continue
         question = row["question"]
         db_id = row["db_id"]
         gold_query = row["SQL"]
         evidence = row["evidence"]
         try:
+            tentative_schema = schema_linking_result[schema_linking_result['question_id'] == index]['tentative_schema'].values[0]
+            tentative_schema = json.loads(json.dumps(ast.literal_eval(tentative_schema)))
             database_schema = get_db_schema_db_id(
                 db_id=db_id,
                 bird_database_path=os.getenv("BASE_TRAIN_DATA_PATH"),
                 queries=[gold_query],
+                tentative_schema=tentative_schema
             )
         except Exception as e:
             print(f"Error in getting database schema: {e}")
@@ -215,9 +231,10 @@ if __name__ == "__main__":
     args.add_argument("--hf_username", type=str, default="MrezaPRZ")
 
     args = args.parse_args()
-
+    wrong_ids = wrong_question()
     model = load_model(args.model_name)
     tokenizer = load_tokenizer(args.model_name)
-    dataset = construct_fineutning_dataset(args.zero_shot)
+    schema_linking_result = pd.read_csv("schema_linking/train_schema_info.csv")
+    dataset = construct_fineutning_dataset(args.zero_shot, wrong_ids, schema_linking_result)
     dataset = dataset.filter(filter_samples_based_on_length, fn_kwargs={'max_seq_length': args.max_seq_length})
     train_model(dataset, args, tokenizer, model)
