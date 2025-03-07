@@ -112,7 +112,7 @@ class GeminiModel:
       model_name: str = 'gemini-1.5-pro',
       finetuned_model: bool = False,
       distribute_requests: bool = False,
-      cache_name: str | None = None,
+      cache_name: str = None,
       temperature: float = 0.01,
       **kwargs,
   ):

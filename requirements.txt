@@ -9,10 +9,8 @@ wandb==0.18.7
 sqlglot==25.32.0
 func_timeout==4.3.5
 langchain_google_vertexai==2.0.13
-flash-attn==2.0.2
 python_dotenv==1.0.1
 sqlvalidator==0.0.20
 vllm==0.7.2
-unsloth==2024.11.10
 pillow==11.1.0
 git+https://github.com/huggingface/trl.git@e95f9fb74a3c3647b86f251b7e230ec51c64b72b#egg=trl\

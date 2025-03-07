@@ -245,6 +245,7 @@ def get_database_schema(
     schema_with_descriptions: Dict[str, Dict[str, Dict[str, Any]]],
     queries: List[str] = None,
     include_value_description: bool = True,
+    tentative_schema = None
 ) -> str:
   """Generates a schema string for the database.
 
@@ -271,6 +272,8 @@ def get_database_schema(
     union_schema_dict = get_union_schema_dict(schema_dict_list, db_path)
   else:
     union_schema_dict = get_db_schema(db_path)
+  if tentative_schema:
+    union_schema_dict = get_union_schema_dict([tentative_schema], db_path)
   database_info = get_database_schema_string(
       db_path,
       db_id,
@@ -282,7 +285,7 @@ def get_database_schema(
   return database_info
 
 
-def get_db_schema_db_id(db_id: str, bird_database_path: str, queries: List[str] = None) -> str:
+def get_db_schema_db_id(db_id: str, bird_database_path: str, queries: List[str] = None, tentative_schema = None) -> str:
   """Generates a schema string for the database.
 
   Args:
@@ -299,5 +302,6 @@ def get_db_schema_db_id(db_id: str, bird_database_path: str, queries: List[str] 
       schema_with_examples={},
       schema_with_descriptions=schema_with_descriptions,
       queries=queries,
+      tentative_schema=tentative_schema,
   )
   return db_schema

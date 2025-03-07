@@ -46,10 +46,19 @@ def syntax_check_sql(
     return False
   except Exception as e:
     return False
+  
+_thread_local = threading.local()
 
+def get_db_connection(db_path: str):
+    """Creates a separate SQLite connection per thread and per database path."""
+    if not hasattr(_thread_local, "connections"):
+        _thread_local.connections = {}
+    if db_path not in _thread_local.connections:
+        _thread_local.connections[db_path] = sqlite3.connect(db_path, timeout=60, check_same_thread=False)
+    return _thread_local.connections[db_path]
 
 def execute_sql(
-    db_path: str, sql: str, fetch: Union[str, int] = "all", timeout: int = 60
+    db_path: str, sql: str, fetch: Union[str, int] = 5000, timeout: int = 60
 ) -> Any:
   """Executes a SQL query on a database.
 
@@ -80,7 +89,8 @@ def execute_sql(
 
     def run(self):
       try:
-        with sqlite3.connect(db_path, timeout=60) as conn:
+        # with sqlite3.connect(db_path, timeout=60) as conn:
+          conn = get_db_connection(db_path)
           cursor = conn.cursor()
           cursor.execute(sql)
           if fetch == "all":
